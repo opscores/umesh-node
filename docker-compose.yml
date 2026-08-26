@@ -1,0 +1,222 @@
+services:
+  validator:
+    # Один сервис для обеих фаз жизни валидатора:
+    #   - genesis    — создание НОВОЙ сети (setup init --role genesis)
+    #   - validator  — пост-генезис валидатор (присоединение к существующей сети)
+    # Фазу выбирает инициализация на хосте (umeshctl setup init --role);
+    # профиль запуска задаётся --profile.
+    image: ${NODE_IMAGE:-umesh-node:latest}
+    container_name: umesh-validator
+    profiles: ["validator"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc:
+        soft: 32768
+        hard: 32768
+    stop_grace_period: 300s
+    ports:
+      - "${VALIDATOR_P2P_BIND_IP:-0.0.0.0}:${VALIDATOR_P2P_PORT:-26656}:26656"
+      # Каждый тип ноды живёт в своём контейнере на своём VPS, поэтому RPC
+      # валидатора публикуется наружу по умолчанию — Sentry/RPC с других хостов
+      # подключаются к нему по адресу http://<validator-ip>:26657. При желании
+      # сузить доступ: VALIDATOR_RPC_BIND_IP=127.0.0.1 в .env.validator.
+      - "${VALIDATOR_RPC_BIND_IP:-0.0.0.0}:${VALIDATOR_RPC_PORT:-26657}:26657"
+      - "${VALIDATOR_METRICS_BIND_IP:-127.0.0.1}:${VALIDATOR_METRICS_PORT:-26660}:26660"
+    volumes:
+      - ./data-validator/config:/home/umesh/.umeshnode/config:rw
+      - ./data-validator/data:/home/umesh/.umeshnode/data:rw
+      - ./data-validator/keyring:/home/umesh/.umeshnode/keyring:rw
+      - ./backups-validator:/home/umesh/.umeshnode/backups:rw
+    tmpfs:
+      - /tmp
+      - /var/tmp
+      - /home/umesh/.cache:rw,noexec,nosuid,nodev,size=256m
+      # WASM AOT cache: tmpfs для validator (volatile, нет persistent wasm рядом с ключами)
+      - /home/umesh/.umeshnode/wasm:size=1024m,uid=1000,gid=1000
+    # В контейнер параметры сети и KEYRING_PASSWORD намеренно НЕ попадают в
+    # окружение процесса. Телеметрия конфигурируется файлом otel.yaml в конфиг-дир
+    # (его пишет umeshctl setup init из OTEL_ENDPOINT) — стандартные
+    # OTEL_EXPORTER_* env vars нода не читает.
+    command:
+      - start
+      - --home
+      - /home/umesh/.umeshnode
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf http://localhost:26657/health >/dev/null &&
+          gosu umesh umeshnode query wasm libwasmvm-version --home /home/umesh/.umeshnode >/dev/null 2>&1 || exit 1
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 900s
+    deploy:
+      resources:
+        limits:
+          cpus: ${CPU_LIMIT_VALIDATOR:-${CPU_LIMIT:-2.0}}
+          memory: ${MEMORY_LIMIT_VALIDATOR:-${MEMORY_LIMIT:-4g}}
+          pids: 32768
+        reservations:
+          memory: ${MEMORY_RESERVATION_VALIDATOR:-${MEMORY_RESERVATION:-2g}}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    labels:
+      - "service=umesh"
+      - "environment=${ENVIRONMENT:-production}"
+      - "role=validator"
+    networks:
+      - umesh
+  sentry:
+    image: ${NODE_IMAGE:-umesh-node:latest}
+    container_name: umesh-sentry
+    profiles: ["sentry"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+      - /home/umesh/.cache:rw,noexec,nosuid,nodev,size=256m
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc:
+        soft: 32768
+        hard: 32768
+    stop_grace_period: 300s
+    ports:
+      - "${SENTRY_P2P_BIND_IP:-0.0.0.0}:${SENTRY_P2P_PORT:-26656}:26656"
+      # RPC и REST публикуются как публичные эндпоинты (sentry — public gateway).
+      # При желании сузить: SENTRY_RPC_BIND_IP=127.0.0.1 в .env.sentry.
+      - "${SENTRY_RPC_BIND_IP:-0.0.0.0}:${SENTRY_RPC_PORT:-26657}:26657"
+      - "${SENTRY_REST_PORT:-1317}:1317"
+      - "${SENTRY_GRPC_PORT:-9090}:9090"
+      - "${SENTRY_GRPC_WEB_PORT:-9091}:9091"
+      - "${SENTRY_METRICS_BIND_IP:-127.0.0.1}:${SENTRY_METRICS_PORT:-26660}:26660"
+      - "${SENTRY_DC_BIND_IP:-127.0.0.1}:${SENTRY_DC_PORT:-26658}:26658"
+    volumes:
+      - ./data-sentry/config:/home/umesh/.umeshnode/config:rw
+      - ./data-sentry/data:/home/umesh/.umeshnode/data:rw
+      - ./data-sentry/keyring:/home/umesh/.umeshnode/keyring:rw
+      - ./data-sentry/wasm:/home/umesh/.umeshnode/wasm:rw
+      - ./backups-sentry:/home/umesh/.umeshnode/backups:rw # метка роли; профиль задаёт --profile
+    command:
+      - start
+      - --home
+      - /home/umesh/.umeshnode
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf http://localhost:26657/health &&
+          curl -sf http://localhost:1317/cosmos/base/tendermint/v1beta1/node_info >/dev/null &&
+          gosu umesh umeshnode query wasm libwasmvm-version --home /home/umesh/.umeshnode >/dev/null 2>&1 || exit 1
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 900s
+    deploy:
+      resources:
+        limits:
+          cpus: ${CPU_LIMIT_SENTRY:-2.0}
+          memory: ${MEMORY_LIMIT_SENTRY:-8g}
+          pids: 32768
+        reservations:
+          memory: ${MEMORY_RESERVATION_SENTRY:-4g}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    labels:
+      - "service=umesh"
+      - "environment=${ENVIRONMENT:-production}"
+      - "role=sentry"
+    networks:
+      - umesh
+  rpc:
+    image: ${NODE_IMAGE:-umesh-node:latest}
+    container_name: umesh-rpc
+    profiles: ["rpc"]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+      - /home/umesh/.cache:rw,noexec,nosuid,nodev,size=256m
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+      nproc:
+        soft: 32768
+        hard: 32768
+    stop_grace_period: 300s
+    ports:
+      - "${RPC_P2P_BIND_IP:-0.0.0.0}:${RPC_P2P_PORT:-26656}:26656"
+      - "${RPC_RPC_BIND_IP:-0.0.0.0}:${RPC_RPC_PORT:-26657}:26657"
+      - "${RPC_REST_PORT:-1317}:1317"
+      - "${RPC_GRPC_PORT:-9090}:9090"
+      - "${RPC_GRPC_WEB_PORT:-9091}:9091"
+      - "${RPC_METRICS_BIND_IP:-127.0.0.1}:${RPC_METRICS_PORT:-26660}:26660"
+    volumes:
+      - ./data-rpc/config:/home/umesh/.umeshnode/config:rw
+      - ./data-rpc/data:/home/umesh/.umeshnode/data:rw
+      - ./data-rpc/keyring:/home/umesh/.umeshnode/keyring:rw
+      - ./data-rpc/wasm:/home/umesh/.umeshnode/wasm:rw
+      - ./backups-rpc:/home/umesh/.umeshnode/backups:rw
+    command:
+      - start
+      - --home
+      - /home/umesh/.umeshnode
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >-
+          curl -sf http://localhost:26657/health &&
+          curl -sf http://localhost:1317/cosmos/base/tendermint/v1beta1/node_info >/dev/null &&
+          gosu umesh umeshnode query wasm libwasmvm-version --home /home/umesh/.umeshnode >/dev/null 2>&1 || exit 1
+      interval: 30s
+      timeout: 15s
+      retries: 15
+      start_period: 900s
+    deploy:
+      resources:
+        limits:
+          cpus: ${CPU_LIMIT_RPC:-2.0}
+          memory: ${MEMORY_LIMIT_RPC:-8g}
+          pids: 32768
+        reservations:
+          memory: ${MEMORY_RESERVATION_RPC:-4g}
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+    labels:
+      - "service=umesh"
+      - "environment=${ENVIRONMENT:-production}"
+      - "role=rpc"
+    networks:
+      - umesh
+networks:
+  umesh:
+    name: umesh
+    external: true

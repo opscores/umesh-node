@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - dev
+
+permissions:
+  contents: read
+
+jobs:
+  shell:
+    name: Shell syntax check
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Check bash syntax (entrypoint.sh)
+        run: bash -n entrypoint.sh
+
+  docker-build:
+    name: Docker build (umeshprep)
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Docker image
+        run: |
+          docker build --pull \
+            --build-arg BUILD_TYPE=umeshprep \
+            --build-arg VERSION=ci \
+            --build-arg COMMIT="${GITHUB_SHA}" \
+            -t umesh-node:ci -f Dockerfile .
+
+      - name: Verify binary
+        run: docker run --rm umesh-node:ci version
