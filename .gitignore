@@ -1,0 +1,43 @@
+data/
+data-*/
+backups/
+*.key
+*.pem
+# Реальные env-файлы (compose-only) — НЕ коммитятся
+.env
+.env.genesis
+.env.validator
+.env.sentry
+.env.rpc
+# Шаблоны env-файлов — коммитятся
+!.env.genesis.example
+!.env.validator.example
+!.env.sentry.example
+!.env.rpc.example
+
+# Реальные YAML конфиги нод — НЕ коммитятся (содержат настройки оператора)
+config/node-*.yaml
+# Шаблоны YAML конфигов — коммитятся
+!config/node-*.yaml.example
+.sentry-connection
+data/config/.sentry-connection
+*.tmp
+priv_validator_key.json
+node_key.json
+priv_validator_state.json
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+*.log
+.codegraph/
+graphify-out/
+.opencode/
+.graphifyignore
+AGENTS.md
+src/
+tools/
+tools/umeshctl/
+tools/umeshprep/
+bin/umeshprep

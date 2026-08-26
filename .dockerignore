@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+
+# Build artifacts
+bin/
+dist/
+src/umesh/
+
+# Data directories
+data/
+data-*/
+backups/
+backups-*/
+
+# Tools (cloned separately, gitignored)
+tools/
+
+# Cache/artifacts
+*.log
+*.tmp
+.coverage*
+coverage.out
+.codegraph/
+graphify-out/
+.opencode/
+
+# Sensitive files
+*.key
+*.pem
+.env
+.env.*
+!.env.*.example
+config/node-*.yaml
+!config/node-*.yaml.example
+.sentry-connection
+priv_validator_key.json
+node_key.json
+priv_validator_state.json
